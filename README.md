@@ -1,0 +1,423 @@
+---
+title: "Decision Tree Lab"
+author: "Maxwell St. John, Helena Lindsay, Allen Baiju"
+date: "November 18, 2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(rio)
+library(plyr)
+library(tidyverse)
+library(rpart)
+library(psych)
+library(pROC)
+library(rpart.plot)
+library(rattle)
+library(rapport)
+library(caret)
+library(knitr)
+```
+
+Congrats! You just graduated from medical school and got a PhD in Data Science at the same time, wow impressive. Because of these incredible accomplishments the world now believes you will be able to cure cancer...no pressure. To start you figured you better create some way to detect cancer when present. Luckily because you are now a MD and DS PhD or MDSDPhD, you have access to data sets and know your way around a ML classifier. So, on the way to fulfilling your destiny to rid the world of cancer you start by building several classifiers that can be used to aid in determining if patients have cancer and the type of tumor. 
+
+The included dataset (clinical_data_breast_cancer_modified.csv) has information on 105 patients across 20 variables, your goal is to build two classifiers one for PR.Status (progesterone receptor), a biomarker that routinely leads to a cancer diagnosis, indicating if there was a positive or negative outcome and one for the Tumor multi-class variable . You would like to be able to explain the model to the mere mortals around you but need a fairly robust and flexible approach so you've chosen to use decision trees to get started and will possibly move to a ensemble model if needed. 
+
+In doing so, similar to  great data scientists working at very average marketing firms, you remembered the excellent education provided to you at UVA in a undergrad data science course and have outlined 20ish steps that will need to be undertaken to complete this task (you can add more or combine if needed).  As always, you will need to make sure to #comment your work heavily and render the results in a clear report (knitted) as the non MDSDPhDs of the world will someday need to understand the wonder and spectacle that will be your R code. Good luck and the world thanks you. 
+
+ Footnotes: 
+-	Some of the steps will not need to be repeated for the second model, use your judgment
+-	You can add or combine steps if needed
+-	Also, remember to try several methods during evaluation and always be mindful of how the model will be used in practice.   
+
+
+```{r}
+#1 Load the data and ensure the column names don't have spaces, hint check.names.  
+data <- tibble(import("clinical_breast_cleaned.csv", check.names= TRUE))
+```
+
+```{r, echo=FALSE}
+#2 Ensure all the variables are classified correctly and ensure the target variable for "PR.Status" is 0 for negative and 1 for positive
+data <- data[-c(3)]
+data$Tumor <- sub('T', '', data$Tumor)
+data$HER2.Final.Status <- revalue(data$HER2.Final.Status, c('Negative'=0))
+data$HER2.Final.Status <- revalue(data$HER2.Final.Status, c('Positive'=1))
+data$Node.Coded <- revalue(data$Node.Coded, c('Positive'=1))
+data$Node.Coded <- revalue(data$Node.Coded, c('Negative'=0))
+data$Metastasis.Coded <- revalue(data$Metastasis.Coded, c('Positive'=1))
+data$Metastasis.Coded <- revalue(data$Metastasis.Coded, c('Negative'=0))
+data$Metastasis <- sub('M', '', data$Metastasis)
+data$AJCC.Stage <- sub('Stage ', '', data$AJCC.Stage)
+data$Converted.Stage <- sub('Stage ', '', data$Converted.Stage)
+data$Converted.Stage <- revalue(data$Converted.Stage, c('No_Conversion'=NA))
+data$Vital.Status <- revalue(data$Vital.Status, c('LIVING'=1))
+data$Vital.Status <- revalue(data$Vital.Status, c('DECEASED'=0))
+```
+
+```{r,include=FALSE}
+#3 Don't check for correlated variables....because it doesn't matter with Decision Trees...that was easy
+```
+
+
+```{r,include=FALSE}
+#4 You also don't need to complete a test train split because the rpart defaults to 10 fold cross-validation to train the model...you're welcome. (You can certainly build trees with a test and train)
+```
+
+```{r,include=FALSE}
+#5 Guess what, you also don't need to standardize the data, because DTs don't give a ish, they make local decisions...keeps getting easier 
+```
+
+# Models{.tabset}
+## PR.Status
+```{r}
+# Base rate
+PR_data_base_rate = sum(data$PR.Status)/length(data$PR.Status)
+PR_data_base_rate
+```
+The base rate was 0.514.
+
+```{r, echo=FALSE}
+#7 Build your model using the default settings
+PR_data <- as_tibble(data)
+PR_data$PR.Status <- factor(PR_data$PR.Status, labels = c("Negative", "Positive"))
+set.seed(1980)
+PR_data_tree_gini = rpart(PR.Status~.,  #<- formula, response variable ~ predictors
+                           #   "." means "use all other variables in data"
+                            method = "class",#<- specify method, use "class" for tree
+                            parms = list(split = "gini"),#<- method for choosing tree split
+                            data = PR_data)#<- data used
+```
+
+```{r, echo=FALSE}
+#8 View the results, what is the most important variable for the tree? 
+PR_data_tree_gini
+```
+Above is the model we built. The most important variables are Days.to.Date.of.Last.Contact, AJCC.Stage, and OS.Time.
+
+```{r}
+#9 Plot the tree using the rpart.plot package
+rpart.plot(PR_data_tree_gini, type =4, extra = 101)
+```
+
+```{r}
+#10 plot and convert the table to a data.frame
+plotcp(PR_data_tree_gini)
+cptable_ex <- as_tibble(PR_data_tree_gini$cptable, ) 
+```
+
+```{r, echo=FALSE}
+#11 Add together the real error and standard error to create a new column and determine the optimal number of splits.
+cptable_ex$opt <- cptable_ex$`rel error`+ cptable_ex$xstd
+```
+
+```{r, echo=FALSE}
+#12 Use the predict function and your model to predict the target variable. 
+PR_data_fitted_model = predict(PR_data_tree_gini, type= "class")
+```
+
+```{r, echo=FALSE}
+#13 Compare the predicted values to those of the actual by generating a matrix ("by-hand").
+PR_data_conf_matrix = table(PR_data_fitted_model, PR_data$PR.Status)
+kable(PR_data_conf_matrix, format = "markdown")
+```
+
+```{r, echo=FALSE}
+#14 Generate, "by-hand", the hit rate and detection rate and compare the detection rate to your original baseline rate. How did your model work?
+PR_data_hit_rate = sum(PR_data_conf_matrix[row(PR_data_conf_matrix) != col(PR_data_conf_matrix)]) / sum(PR_data_conf_matrix)
+PR_data_detection_rate = PR_data_conf_matrix[2,2]/sum(PR_data_conf_matrix)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+tibble(hit_rate=PR_data_hit_rate, detection_rate=PR_data_detection_rate, base_rate=PR_data_base_rate)
+```
+The hit rate was 0.267 while the detection rate was 0.419. The detection rate was lower than the base rate we calculated previously (0.514).
+
+```{r}
+#15 Use the the confusion matrix function to check a variety of metrics and comment on the metric that might be best for this type of analysis.  
+PR_data_conf_matrix_func <- confusionMatrix(PR_data_fitted_model, PR_data$PR.Status, positive = "Positive", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+PR_data_conf_matrix_func
+```
+From these metrics, we can draw a few conclusions. First, since our model has a higher sensitivity value (0.8148) than specificity value (0.6471) we know our model is better at identifying subjects that are cancer-positive than negative. The accuracy of our model was calculated to be 0.7333.
+
+```{r, message=FALSE, warning=FALSE}
+#16 Generate a ROC and AUC output, interpret the results
+PR_data_ROC <- roc(PR_data$PR.Status, as.numeric(PR_data_fitted_model), plot = TRUE)
+PR_data_ROC$auc
+```
+Since the AUC value of 0.7309 is high, we can conclude that there is a 73.09% chance that our model accurately identifies cancer.
+
+### Modifications{.tabset}
+#### Threshold{.tabset}
+##### Threshold = 0.5
+```{r, echo=FALSE}
+#17 Use the predict function to generate percentages, then select several different threshold levels using the confusion matrix function and interpret the results. What metric should we be trying to optimize?
+PR_data_fitted_prob <- predict(PR_data_tree_gini, type="prob")
+PR_data_probs <- PR_data_fitted_prob[,2]
+adjust_thres <- function(x, y, z) {
+  #x=pred_probablities, y=threshold, z=test_outcome
+  thres <- as.factor(ifelse(x > y, "Positive", "Negative"))
+  confusionMatrix(thres, z, positive = "Positive", dnn=c("Prediction", "Actual"), mode = "everything")
+}
+adjust_thres(PR_data_probs, .5, PR_data$PR.Status)
+```
+
+##### Adjusted Thresholds (.3, .7, .1)
+```{r, echo=FALSE}
+thresholds <- seq(.3, .7, .1)
+Sensitivities <- sapply(thresholds, function(x) adjust_thres(PR_data_probs, x, PR_data$PR.Status)$byClass["Sensitivity"])
+Sensitivities
+```
+
+#### Complexity Parameter (CP){.tabset}
+##### Complexity Parameter (CP) = 0.25 
+```{r, echo=FALSE}
+#18 Use your optimal cp (from step 11) (assuming it's different) and rerun the model, how does this impact the quality of the model.
+optimal_CP_0 <- cptable_ex$CP[1]
+PR_data_tree_gini_0split = rpart(PR.Status~.,  #<- formula, response variable ~ predictors
+                           #   "." means "use all other variables in data"
+                            method = "class",#<- specify method, use "class" for tree
+                            parms = list(split = "gini"),#<- method for choosing tree split
+                            data = PR_data,
+                           control = rpart.control(cp = optimal_CP_0))#<- data used
+PR_data_fitted_model_0 = predict(PR_data_tree_gini_0split, type= "class")
+PR_data_conf_matrix_0 <- confusionMatrix(PR_data_fitted_model_0, PR_data$PR.Status, positive = "Positive", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+PR_data_conf_matrix_0
+PR_data_conf_matrix_0$byClass["Sensitivity"]
+```
+This makes the model predict exclusively positives since the included nodes are set to zero.
+
+##### Complexity Parameter (CP) = 0.1 
+```{r, echo=FALSE}
+optimal_CP_1 <- cptable_ex$CP[2]
+PR_data_tree_gini_1split = rpart(PR.Status~.,  #<- formula, response variable ~ predictors
+                           #   "." means "use all other variables in data"
+                            method = "class",#<- specify method, use "class" for tree
+                            parms = list(split = "gini"),#<- method for choosing tree split
+                            data = PR_data,
+                           control = rpart.control(cp = optimal_CP_1))#<- data used
+PR_data_fitted_model_1 = predict(PR_data_tree_gini_1split, type= "class")
+PR_data_conf_matrix_1 <- confusionMatrix(PR_data_fitted_model_1, PR_data$PR.Status, positive = "Positive", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+PR_data_conf_matrix_1
+PR_data_conf_matrix_1$byClass["Sensitivity"]
+```
+
+#### Minimum number of observations in any terminal{.tabset}
+##### Minimum number of observations in any terminal = 15
+```{r, echo=FALSE}
+#19 Try adjusting several other hyperparameters via rpart.control and review the model evaluation metrics. 
+PR_data_tree_gini_test1 = rpart(PR.Status~.,  #<- formula, response variable ~ predictors
+                           #   "." means "use all other variables in data"
+                            method = "class",#<- specify method, use "class" for tree
+                            parms = list(split = "gini"),#<- method for choosing tree split
+                            data = PR_data,
+                           control = rpart.control(minbucket = 15))#<- data used
+PR_data_fitted_model_test1 = predict(PR_data_tree_gini_test1, type= "class")
+PR_data_conf_matrix_test1 <- confusionMatrix(PR_data_fitted_model_test1, PR_data$PR.Status, positive = "Positive", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+PR_data_conf_matrix_test1
+```
+
+##### Minimum number of observations in any terminal = 5
+```{r, echo=FALSE}
+PR_data_tree_gini_test2 = rpart(PR.Status~.,  #<- formula, response variable ~ predictors
+                           #   "." means "use all other variables in data"
+                            method = "class",#<- specify method, use "class" for tree
+                            parms = list(split = "gini"),#<- method for choosing tree split
+                            data = PR_data,
+                           control = rpart.control(minsplit = 5))#<- data used
+PR_data_fitted_model_test2 = predict(PR_data_tree_gini_test2, type= "class")
+PR_data_conf_matrix_test2 <- confusionMatrix(PR_data_fitted_model_test2, PR_data$PR.Status, positive = "Positive", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+PR_data_conf_matrix_test2
+rpart.plot(PR_data_tree_gini_test2, type =4, extra = 101)
+```
+
+By adjusting the minimum number of observations in any terminal to 5, the sensitivity and specificity values are maximized thus far and the model accuracy is calculated to be 0.8857. The balanced accuracy (0.8862) is equivalent to the AUC value. This adjustment has significantly improved the prediction accuracy of our model.
+
+## Tumor multi-class variable
+```{r, include=FALSE}
+#20 Follow the same steps for the multi-class target, tumor, aside from step 1, 2 and 14. For step 15 compare to the four base rates and see how you did. 
+```
+
+
+```{r}
+#1 base rates
+data$Tumor <- as.factor(data$Tumor)
+Tumor1_data_base_rate = sum(ifelse(data$Tumor == "1", 1,0))/length(data$Tumor)
+Tumor2_data_base_rate = sum(ifelse(data$Tumor == "2", 1,0))/length(data$Tumor)
+Tumor3_data_base_rate = sum(ifelse(data$Tumor == "3", 1,0))/length(data$Tumor)
+Tumor4_data_base_rate = sum(ifelse(data$Tumor == "4", 1,0))/length(data$Tumor)
+Tumor1_data_base_rate
+Tumor2_data_base_rate
+Tumor3_data_base_rate
+Tumor4_data_base_rate
+```
+
+```{r, echo=FALSE}
+#2 Build your model using the default settings
+Tumor_data <- as_tibble(data)
+set.seed(1980)
+Tumor_data_tree_gini = rpart(Tumor~.,  #<- formula, response variable ~ predictors
+                           #   "." means "use all other variables in data"
+                            method = "class",#<- specify method, use "class" for tree
+                            parms = list(split = "gini"),#<- method for choosing tree split
+                            data = Tumor_data)#<- data used
+```
+
+```{r}
+#3 View the results, what is the most important variable for the tree? 
+Tumor_data_tree_gini
+```
+AJCC.Stage is the most important variable.
+
+
+```{r}
+#4 Plot the tree using the rpart.plot package
+rpart.plot(Tumor_data_tree_gini, type =4, extra = 101)
+```
+
+```{r}
+#5 plot and convert the table to a data.frame
+plotcp(Tumor_data_tree_gini)
+```
+
+```{r, echo=FALSE}
+cptable_ex <- as_tibble(Tumor_data_tree_gini$cptable, )
+```
+
+```{r,echo=FALSE}
+#6 Add together the real error and standard error to create a new column and determine the optimal number of splits.
+cptable_ex$opt <- cptable_ex$`rel error`+ cptable_ex$xstd
+```
+
+
+```{r}
+#7 Use the predict function and your model to predict the target variable. 
+Tumor_data_fitted_model = predict(Tumor_data_tree_gini, type= "class")
+table(Tumor_data_fitted_model)
+```
+
+```{r, include=FALSE}
+#8 Compare the predicted values to those of the actual by generating a matrix ("by-hand").
+Tumor_data_conf_matrix = table(Tumor_data_fitted_model, Tumor_data$Tumor)
+Tumor_data_conf_matrix
+```
+
+```{r}
+#9 Use the the confusion matrix function to check a variety of metrics and comment on the metric that might be best for this type of analysis.
+confusionMatrix(Tumor_data_conf_matrix)
+```
+The sensitivity and specificity metrics provide us with information regarding how the model classifies a subject as positive or negative. The accuracy (0.8381) is also an important metric for our analysis. Unfortunately, our model fails to correctly predict tumors of the fourth class.  
+
+```{r, warning=FALSE, message=FALSE}
+#10 Generate a ROC and AUC output, interpret the results
+Tumor_data_ROC <- roc(Tumor_data$Tumor, as.numeric(Tumor_data_fitted_model), plot = TRUE)
+Tumor_data_ROC$auc
+```
+This ROC curve yields an AUC of approximately 0.8077. This model is highly capable of distinguishing between the classes.
+
+### Modifications{.tabset}
+#### Threshold= 0.35 for each class{.tabset}
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+#11 Use the predict function to generate percentages, then select several different threshold levels using the confusion matrix function and interpret the results? What metric should we be trying to optimize. 
+Tumor_data_fitted_prob <- predict(Tumor_data_tree_gini, type="prob")
+Tumor_data_probs <- Tumor_data_fitted_prob[,2]
+```
+
+##### Class1
+```{r, warning=FALSE}
+multiclass.roc(data$Tumor, ifelse(Tumor_data_fitted_prob[, '1'] >= .35, 0, 1), plot = TRUE)
+```
+
+##### Class2
+```{r, warning=FALSE}
+multiclass.roc(data$Tumor, ifelse(Tumor_data_fitted_prob[, '2'] >= .35, 0, 1), plot = TRUE)
+```
+
+##### Class3
+```{r, warning=FALSE}
+multiclass.roc(data$Tumor, ifelse(Tumor_data_fitted_prob[, '3'] >= .35, 0, 1), plot = TRUE)
+```
+
+##### Class4
+```{r, warning=FALSE}
+multiclass.roc(data$Tumor, ifelse(Tumor_data_fitted_prob[, '4'] >= .35, 0, 1), plot = TRUE)
+```
+
+#### Complexity Parameter (CP){.tabset}
+##### Complexity Parameter (CP) = 0.25 
+```{r, echo=FALSE}
+#12 Use your optimal cp (from step 11) (assuming it's different) and rerun the model, how does this impact the quality of the model.
+optimal_CP_0 <- cptable_ex$CP[1]
+Tumor_data_tree_gini_0split = rpart(Tumor~.,  #<- formula, response variable ~ predictors
+                           #   "." means "use all other variables in data"
+                            method = "class",#<- specify method, use "class" for tree
+                            parms = list(split = "gini"),#<- method for choosing tree split
+                            data = Tumor_data,
+                           control = rpart.control(cp = optimal_CP_0))#<- data used
+Tumor_data_fitted_model_0 = predict(Tumor_data_tree_gini_0split, type= "class")
+Tumor_data_fitted_model_0 <- as.factor(Tumor_data_fitted_model_0)
+Tumor_data$Tumor <- as.factor(Tumor_data$Tumor)
+Tumor_data_conf_matrix_0 <- confusionMatrix(Tumor_data_fitted_model_0, Tumor_data$Tumor, positive = "Positive", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+Tumor_data_conf_matrix_0
+```
+
+
+##### Complexity Parameter (CP) = 0.1 
+```{r, echo=FALSE}
+optimal_CP_0 <- cptable_ex$CP[2]
+Tumor_data_tree_gini_0split = rpart(Tumor~.,  #<- formula, response variable ~ predictors
+                           #   "." means "use all other variables in data"
+                            method = "class",#<- specify method, use "class" for tree
+                            parms = list(split = "gini"),#<- method for choosing tree split
+                            data = Tumor_data,
+                           control = rpart.control(cp = optimal_CP_0))#<- data used
+Tumor_data_fitted_model_0 = predict(Tumor_data_tree_gini_0split, type= "class")
+Tumor_data_fitted_model_0 <- as.factor(Tumor_data_fitted_model_0)
+Tumor_data$Tumor <- as.factor(Tumor_data$Tumor)
+Tumor_data_conf_matrix_0 <- confusionMatrix(Tumor_data_fitted_model_0, Tumor_data$Tumor, positive = "Positive", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+Tumor_data_conf_matrix_0
+```
+
+#### Minimum number of observations in any terminal{.tabset}
+##### Minimum number of observations in any terminal = 15
+```{r, echo=FALSE}
+#13 Try adjusting several other hyperparameters via rpart.control and review the model evaluation metrics. 
+Tumor_data_tree_gini_test1 = rpart(Tumor~.,  #<- formula, response variable ~ predictors
+                           #   "." means "use all other variables in data"
+                            method = "class",#<- specify method, use "class" for tree
+                            parms = list(split = "gini"),#<- method for choosing tree split
+                            data = Tumor_data,
+                           control = rpart.control(minbucket = 15))#<- data used
+Tumor_data_fitted_model_test1 = predict(Tumor_data_tree_gini_test1, type= "class")
+Tumor_data_conf_matrix_test1 <- confusionMatrix(Tumor_data_fitted_model_test1, Tumor_data$Tumor, positive = "Positive", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+Tumor_data_conf_matrix_test1
+```
+
+
+##### Minimum number of observations in any terminal = 5
+```{r, echo=FALSE}
+Tumor_data_tree_gini_test2 = rpart(Tumor~.,  #<- formula, response variable ~ predictors
+                           #   "." means "use all other variables in data"
+                            method = "class",#<- specify method, use "class" for tree
+                            parms = list(split = "gini"),#<- method for choosing tree split
+                            data = Tumor_data,
+                           control = rpart.control(minsplit = 5))#<- data used
+Tumor_data_fitted_model_test2 = predict(Tumor_data_tree_gini_test2, type= "class")
+Tumor_data_conf_matrix_test2 <- confusionMatrix(Tumor_data_fitted_model_test2, Tumor_data$Tumor, positive = "Positive", dnn=c("Prediction", "Actual"), mode = "sens_spec")
+Tumor_data_conf_matrix_test2
+rpart.plot(Tumor_data_tree_gini_test2, type =4, extra = 101)
+```
+By reducing the number of observations per terminal to 5, we yield an accuracy of 0.9524.
+
+
+
+```{r}
+#21 Summarize what you learned for each model along the way and make recommendations to the world on how this could be used moving forward, being careful not to over promise. 
+```
+From the first model regarding the PR variable, we learned that the most important variables were Days.to.Date.of.Last.Contact, AJCC.Stage, and OS.Time. We found that our model had a higher sensitivity value (0.8148) than specificity value (0.6471) and concluded that it is better at identifying subjects that are cancer-positive than negative. The accuracy of our first model was calculated to be 0.7333. From the AUC value and ROC curve, we determined that there is a 73.09% chance that our first model accurately identifies cancer based on the PR variable. By adjusting the minimum number of observations in any terminal to 5, the sensitivity and specificity values were maximized and the model's prediction accuracy improved to 0.8857.
+
+From the second model regarding the tumor information, we found the most important variable was AJCC.Stage. The primary ROC curve for this model yielded an AUC value of approximately 0.83, allowing us to conclude that the model is highly capable of distinguishing between tumor types. Similar to our methodology with the first model, hyperparameter adjustment in the form of a reduction in the number of observations per terminal to 5 improved the prediction accuracy to 0.9524.
+
+While our models were overall successful and can help with diagnoses, it is important to acknowledge that the models aren't perfect. While it is impossible to create a perfect model, building these models with larger datasets would make them more successful.  
